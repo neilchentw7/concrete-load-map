@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>預拌車載運量地圖</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="data.js"></script>
+<style>
+  :root { --bg:#ffffff; --ink:#1b1f24; --muted:#5b6470; --line:#d9dde3; --soft:#f3f5f7; --accent:#1F6FB2; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1c2026; --ink:#eceff3; --muted:#a3acb8; --line:#3a414b; --soft:#262b33; } }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.45 system-ui, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+  #map { position:absolute; inset:0; }
+  .card { background:var(--bg); border:1px solid var(--line); border-radius:10px; box-shadow:0 2px 12px rgba(0,0,0,.22); }
+  #panel { position:absolute; z-index:5; top:10px; left:10px; width:262px; max-height:calc(100% - 20px); overflow:auto;
+    padding:10px 12px; box-sizing:border-box; }
+  #panel h1 { font-size:15px; margin:0 26px 2px 0; }
+  #panel h2 { font-size:12px; margin:12px 0 4px; color:var(--muted); font-weight:600; }
+  .sub { color:var(--muted); font-size:12px; }
+  #panel label { display:flex; align-items:center; gap:6px; padding:1px 0; cursor:pointer; }
+  .sw { display:inline-block; width:22px; height:5px; border-radius:3px; flex:none; }
+  .km { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; font-size:12px; white-space:nowrap; }
+  #q { width:100%; box-sizing:border-box; padding:7px 8px; border:1px solid var(--line); border-radius:7px;
+    background:var(--bg); color:var(--ink); font:inherit; }
+  #msg { color:var(--muted); font-size:12px; min-height:16px; margin-top:3px; }
+  button { font:inherit; color:var(--ink); background:var(--soft); border:1px solid var(--line); border-radius:7px;
+    padding:5px 10px; cursor:pointer; }
+  button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; }
+  #toggle { position:absolute; right:8px; top:7px; padding:1px 8px; font-size:12px; }
+  #panel.closed > :not(h1):not(#toggle) { display:none; }
+  #sheet { position:absolute; z-index:6; left:284px; right:60px; bottom:26px; padding:10px 12px 8px; display:none;
+    max-width:900px; }
+  #sheet.show { display:block; }
+  #close { position:absolute; right:8px; top:7px; padding:1px 8px; font-size:12px; }
+  #head { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; margin-right:40px; }
+  #load { font-size:22px; font-weight:700; line-height:1.15; white-space:nowrap; }
+  #load small { display:block; font-size:11px; font-weight:400; color:var(--muted); }
+  #name b { font-size:15px; }
+  #facts { display:flex; gap:4px 16px; flex-wrap:wrap; margin:6px 0 4px; font-size:13px; }
+  #facts span { color:var(--muted); } #facts b { font-variant-numeric:tabular-nums; }
+  #prof { width:100%; height:150px; display:block; touch-action:none; }
+  #prof text { fill:var(--muted); font-size:10.5px; }
+  #read { font-size:12.5px; color:var(--muted); min-height:18px; font-variant-numeric:tabular-nums; }
+  #read b { color:var(--ink); }
+  .truck { width:18px; height:18px; border-radius:50%; background:#fff; border:4px solid #1b1f24; box-shadow:0 0 0 2px #fff, 0 2px 6px rgba(0,0,0,.5); }
+  .cal { background:#1b1f24; color:#fff; border:2px solid #fff; border-radius:11px; padding:0 6px; font-size:12px;
+    line-height:18px; font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.4); cursor:pointer; white-space:nowrap; }
+  .home { background:var(--accent); color:#fff; border:2px solid #fff; border-radius:6px; padding:1px 6px; font-size:12px;
+    font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.4); }
+  .pin { width:14px; height:14px; border-radius:50%; background:#fff; border:3px solid var(--accent); box-shadow:0 1px 4px rgba(0,0,0,.5); }
+  .maplibregl-popup-content { color:#1b1f24; font-size:13px; padding:9px 12px; }
+  @media (max-width:760px) {
+    #panel { width:auto; right:54px; max-height:52%; }
+    #sheet { left:8px; right:8px; bottom:8px; }
+    #prof { height:120px; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel" class="card">
+  <button id="toggle">收合</button>
+  <h1>預拌車載運量地圖</h1>
+  <div class="sub">藍色=已確認可滿載的主線。其他顏色=建議載運量(暫定規則,僅供參考)。點道路看路線與坡度剖面。</div>
+  <h2>搜尋</h2>
+  <input id="q" list="sug" placeholder="路名、地名、座標或 Plus Code" autocomplete="off"><datalist id="sug"></datalist>
+  <div id="msg"></div>
+  <h2>檢視</h2>
+  <div class="row">
+    <button id="b3d" class="on">3D 地形</button>
+    <button id="bbase" title="切換底圖">底圖:電子地圖</button>
+  </div>
+  <h2>上色依據</h2>
+  <label><input type="radio" name="mode" value="0" checked><span>建議載運量(暫定規則)</span></label>
+  <label><input type="radio" name="mode" value="1"><span>離開主線後的最大上坡</span></label>
+  <label><input type="radio" name="mode" value="2"><span>該路段本身坡度</span></label>
+  <h2>圖例</h2><div id="cls"></div>
+  <h2>道路類型</h2><div id="typ"></div>
+  <h2>說明</h2>
+  <div class="sub">黑色標籤是公司的經驗點。坡度取自內政部 20 m DTM,載運量規則由經驗點歸納,誤差約 ±1 方;最深色為危險、不宜使用預拌車。</div>
+</div>
+
+<div id="sheet" class="card">
+  <button id="close">關閉</button>
+  <div id="head"><div id="load"></div><div id="name"></div></div>
+  <div id="facts"></div>
+  <svg id="prof"></svg>
+  <div class="row" style="align-items:center;margin-top:4px">
+    <button id="play">▶ 播放路線</button>
+    <div id="read"></div>
+  </div>
+</div>
+
+<script>
+const D = window.DATA, C = D.colors;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = id => document.getElementById(id);
+const loadColor = v => v === 9 ? C[7] : v >= 4 ? C[8 - v] : v > 0 ? C[5] : C[6];
+const loadText = v => v === 9 ? '主線 ' + D.full + ' 方' : v >= 4 ? v + ' 方' : v > 0 ? D.danger : '不可達';
+
+// ---------- 資料解碼 ----------
+const RUNS = D.runs.map((r, i) => {
+  const [rid, t, c, e, dist, so, up, ld, cb, el, node, dp, hp] = r;
+  const pts = []; let la = 0, lo = 0;
+  for (let k = 0; k < e.length; k += 2) { la += e[k]; lo += e[k + 1]; pts.push([lo / 1e5, la / 1e5]); }
+  return {i, rid, t, c, pts, dist, so, up, ld, cb, el, node, dp, hp};
+});
+const T = D.tree;
+const wOf = t => ({"省道":4.6, "縣道/市道":4.2, "鄉道/區道":3.8})[D.types[t]] || 2.8;
+
+// ---------- 地圖 ----------
+const DEM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+const bases = [['emap', '電子地圖'], ['photo', '正射影像'], ['osm', 'OpenStreetMap']];
+const map = new maplibregl.Map({
+  container: 'map', maxPitch: 78, attributionControl: {compact: true},
+  style: {version: 8, sources: {
+    emap: {type:'raster', tileSize:256, maxzoom:19, attribution:'© 內政部國土測繪中心',
+      tiles:['https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}']},
+    photo: {type:'raster', tileSize:256, maxzoom:19, attribution:'© 內政部國土測繪中心',
+      tiles:['https://wmts.nlsc.gov.tw/wmts/PHOTO2/default/GoogleMapsCompatible/{z}/{y}/{x}']},
+    osm: {type:'raster', tileSize:256, maxzoom:19, attribution:'© OpenStreetMap 貢獻者',
+      tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png']},
+    dem: {type:'raster-dem', tiles:[DEM], tileSize:256, encoding:'terrarium', maxzoom:14, attribution:'地形:Mapzen/AWS Terrain Tiles'},
+    hill: {type:'raster-dem', tiles:[DEM], tileSize:256, encoding:'terrarium', maxzoom:14}
+  }, layers: [
+    {id:'emap', type:'raster', source:'emap'},
+    {id:'photo', type:'raster', source:'photo', layout:{visibility:'none'}},
+    {id:'osm', type:'raster', source:'osm', layout:{visibility:'none'}},
+    {id:'hill', type:'hillshade', source:'hill', paint:{'hillshade-exaggeration':0.3, 'hillshade-shadow-color':'#2b3440'}}
+  ]},
+  center: [121.47, 24.50], zoom: 9.4, pitch: 55, bearing: -25
+});
+map.addControl(new maplibregl.NavigationControl({visualizePitch: true}), 'top-right');
+const geo = new maplibregl.GeolocateControl({positionOptions: {enableHighAccuracy: true}, trackUserLocation: false});
+map.addControl(geo, 'top-right');
+map.addControl(new maplibregl.ScaleControl({unit: 'metric'}), 'bottom-right');
+
+let mode = 0, is3d = true, baseIdx = 0;
+const on = {c: D.labels[0].map(() => true), t: D.types.map(() => true)};
+const colorExpr = m => ['match', ['get', 'c' + m], ...C.flatMap((col, i) => [i, col]), '#888888'];
+const filterExpr = () => ['all',
+  ['in', ['get', 'c' + mode], ['literal', on.c.map((v, i) => v ? i : -1).filter(i => i >= 0)]],
+  ['in', ['get', 't'], ['literal', on.t.map((v, i) => v ? i : -1).filter(i => i >= 0)]]];
+const widthExpr = k => ['interpolate', ['linear'], ['zoom'], 8, ['*', ['get', 'w'], 0.45 * k], 13, ['*', ['get', 'w'], k], 17, ['*', ['get', 'w'], 2.2 * k]];
+
+map.on('load', () => {
+  map.setTerrain({source: 'dem', exaggeration: 1.4});
+  map.addSource('outline', {type:'geojson', data:{type:'FeatureCollection', features: D.outline.map(o => ({type:'Feature', properties:{}, geometry:{type:'LineString', coordinates:o}}))}});
+  map.addLayer({id:'outline', type:'line', source:'outline', paint:{'line-color':'#3b4654', 'line-width':1.4, 'line-dasharray':[4, 3]}});
+  map.addSource('roads', {type:'geojson', data:{type:'FeatureCollection', features: RUNS.map(r => ({type:'Feature',
+    properties:{i:r.i, c0:r.c[0], c1:r.c[1], c2:r.c[2], t:r.t, w:wOf(r.t)}, geometry:{type:'LineString', coordinates:r.pts}}))}});
+  map.addLayer({id:'roads', type:'line', source:'roads', layout:{'line-cap':'round', 'line-join':'round'},
+    paint:{'line-color': colorExpr(0), 'line-width': widthExpr(1), 'line-opacity':0.96}});
+  map.addLayer({id:'roads-hit', type:'line', source:'roads', paint:{'line-color':'#000', 'line-opacity':0, 'line-width':16}});
+  map.addSource('route', {type:'geojson', data:{type:'FeatureCollection', features:[]}});
+  map.addLayer({id:'route-case', type:'line', source:'route', layout:{'line-cap':'round', 'line-join':'round'}, paint:{'line-color':'#ffffff', 'line-width':10, 'line-opacity':0.95}});
+  map.addLayer({id:'route', type:'line', source:'route', layout:{'line-cap':'round', 'line-join':'round'}, paint:{'line-color':['get', 'col'], 'line-width':5.5}});
+  const b = new maplibregl.LngLatBounds();
+  D.outline.forEach(o => o.forEach(p => b.extend(p)));
+  RUNS.forEach(r => { b.extend(r.pts[0]); });
+  map.fitBounds(b, {padding: 40, pitch: 55, bearing: -25, duration: 0});
+  refresh();
+});
+
+const homeEl = Object.assign(document.createElement('div'), {className:'home', textContent:'公司'});
+new maplibregl.Marker({element: homeEl}).setLngLat([D.company[1], D.company[0]])
+  .setPopup(new maplibregl.Popup({offset: 14}).setHTML('<b>公司(起算點)</b><br>' + esc(D.company[2]))).addTo(map);
+D.cal.forEach(p => {
+  const el = Object.assign(document.createElement('div'), {className:'cal', textContent: p[3] + ' 方'});
+  new maplibregl.Marker({element: el}).setLngLat([p[2], p[1]])
+    .setPopup(new maplibregl.Popup({offset: 12}).setHTML('<b>' + esc(p[0]) + '</b><br>經驗載運量:<b>' + esc(p[3]) + ' 方</b>' + (p[4] ? '<br><span style="color:#5b6470">' + esc(p[4]) + '</span>' : ''))).addTo(map);
+});
+
+// ---------- 圖例與篩選 ----------
+function kmBy(key) {
+  const n = key === 't' ? D.types.length : D.labels[mode].length, a = new Array(n).fill(0);
+  RUNS.forEach(r => { a[key === 't' ? r.t : r.c[mode]] += r.dist.length * 0.05; });
+  return a;
+}
+function boxes(el, names, key, sw) {
+  const kms = kmBy(key); el.innerHTML = '';
+  names.forEach((nm, i) => {
+    if (!nm || (key === 'c' && kms[i] < 0.05)) return;
+    const lab = document.createElement('label');
+    lab.innerHTML = '<input type="checkbox"' + (on[key][i] ? ' checked' : '') + '>' + (sw ? '<span class="sw" style="background:' + C[i] + '"></span>' : '') +
+      '<span>' + esc(nm) + '</span><span class="km">' + Math.round(kms[i]) + ' km</span>';
+    lab.querySelector('input').addEventListener('change', e => { on[key][i] = e.target.checked; refresh(); });
+    el.appendChild(lab);
+  });
+}
+function refresh() {
+  if (!map.getLayer('roads')) return;
+  map.setPaintProperty('roads', 'line-color', colorExpr(mode));
+  map.setFilter('roads', filterExpr()); map.setFilter('roads-hit', filterExpr());
+}
+boxes($('cls'), D.labels[0], 'c', true); boxes($('typ'), D.types, 't', false);
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', e => {
+  mode = +e.target.value; on.c = D.labels[mode].map(() => true); boxes($('cls'), D.labels[mode], 'c', true); refresh();
+}));
+$('b3d').addEventListener('click', () => {
+  is3d = !is3d; $('b3d').classList.toggle('on', is3d); $('b3d').textContent = is3d ? '3D 地形' : '平面';
+  map.setTerrain(is3d ? {source: 'dem', exaggeration: 1.4} : null);
+  map.easeTo({pitch: is3d ? 55 : 0, bearing: is3d ? map.getBearing() : 0, duration: 600});
+});
+$('bbase').addEventListener('click', () => {
+  baseIdx = (baseIdx + 1) % bases.length;
+  bases.forEach((b, i) => map.setLayoutProperty(b[0], 'visibility', i === baseIdx ? 'visible' : 'none'));
+  $('bbase').textContent = '底圖:' + bases[baseIdx][1];
+});
+const panel = $('panel');
+$('toggle').addEventListener('click', () => { panel.classList.toggle('closed'); $('toggle').textContent = panel.classList.contains('closed') ? '展開' : '收合'; });
+if (window.innerWidth < 760) { panel.classList.add('closed'); $('toggle').textContent = '展開'; }
+
+// ---------- 找最近的道路 ----------
+function nearest(lat, lon, onlyVisible) {
+  const cs = Math.cos(lat * Math.PI / 180); let best = null, bd = Infinity;
+  for (const r of RUNS) {
+    if (onlyVisible && !(on.c[r.c[mode]] && on.t[r.t])) continue;
+    for (let k = 0; k < r.pts.length; k++) {
+      const dx = (r.pts[k][0] - lon) * cs, dy = r.pts[k][1] - lat, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = [r, k]; }
+    }
+  }
+  return best ? {run: best[0], v: best[1], m: Math.sqrt(bd) * 111320} : null;
+}
+
+// ---------- 選取道路:資訊、路線、剖面 ----------
+let cur = null, truck = null, anim = null, pin = null;
+function routeTo(node) {
+  const la = [], lo = [], z = [], d = [], ld = [];
+  for (let v = node; v >= 0; v = T.p[v]) { la.push(T.lat[v] / 1e5); lo.push(T.lon[v] / 1e5); z.push(T.z[v]); d.push(T.d[v]); ld.push(T.ld[v]); }
+  [la, lo, z, d, ld].forEach(a => a.reverse());
+  return {la, lo, z, d, ld};
+}
+function select(run, v, fly) {
+  stopAnim();
+  const k = Math.min(run.dist.length - 1, Math.floor(v / 2)), R = D.roads[run.rid], p = run.pts[Math.min(v, run.pts.length - 1)];
+  const main = run.c[0] === 7, ld = run.ld[k], s = run.so[k];
+  $('load').innerHTML = (main ? '主線 ' + D.full + ' 方' : ld == null ? '不可達' : ld <= 3 ? esc(D.danger) : ld + ' 方') +
+    '<small>' + (main ? '公司已確認可滿載' : ld == null ? '一般路線到不了' : '建議載運量(暫定)') + '</small>';
+  $('load').style.color = main ? C[7] : ld == null ? C[6] : (ld <= 3 ? C[4] : 'inherit');
+  $('name').innerHTML = '<b>' + esc(R[0]) + '</b><br><span class="sub">' + esc(D.types[run.t]) + '|' + esc(R[1]) + (R[2] ? ' ' + esc(R[2]) : '') + (R[3] ? '|接 ' + esc(R[3]) : '') + '</span>';
+  const f = (v, sc, dp, u) => v == null ? '—' : (v / sc).toFixed(dp) + u, facts = [];
+  facts.push(['行車距離', run.dist[k] == null ? '到不了' : f(run.dist[k], 100, 1, ' km')]);
+  if (!main) { facts.push(['離開主線後最大上坡', f(run.up[k], 10, 1, '%')]); facts.push(['支線陡坡爬升', f(run.cb[k], 1, 0, ' m')]);
+    if (run.hp[k]) facts.push(['支線大轉彎', run.hp[k] + ' 處(可能要再減 1 方)']); }
+  facts.push(['此段坡度', s == null ? '未計' : f(Math.abs(s), 10, 1, '%') + (s >= 0 ? ' 上坡' : ' 下坡')]);
+  facts.push(['高程', f(run.el[k], 1, 0, ' m')]);
+  if (run.dp[k] != null) facts.push(['經管制道路', f(run.dp[k], 100, 1, ' km')]);
+  if (R[5]) facts.push(['管制', esc(R[5])]);
+  $('facts').innerHTML = facts.map(a => '<div><span>' + a[0] + '</span> <b>' + a[1] + '</b></div>').join('') +
+    '<div><a target="_blank" rel="noopener" href="https://www.google.com/maps?q=' + p[1].toFixed(6) + ',' + p[0].toFixed(6) + '">Google Maps</a></div>';
+  $('sheet').classList.add('show');
+  const node = run.node[k];
+  if (node == null || node < 0) { cur = null; setRoute(null); drawProfile(); $('play').style.display = 'none'; $('read').textContent = '這段路從公司沿一般路線到不了,沒有路線可顯示。'; }
+  else {
+    const rt = routeTo(node);
+    rt.la.push(p[1]); rt.lo.push(p[0]); rt.z.push(run.el[k] == null ? rt.z[rt.z.length - 1] : run.el[k]);
+    rt.d.push(Math.max(rt.d[rt.d.length - 1], run.dist[k] * 10)); rt.ld.push(main ? 9 : (ld == null ? 0 : ld));
+    cur = rt; setRoute(rt); drawProfile(); $('play').style.display = ''; readout(rt.d.length - 1);
+    if (fly) { const b = new maplibregl.LngLatBounds(); rt.lo.forEach((x, i) => b.extend([x, rt.la[i]]));
+      map.fitBounds(b, {padding: {top: 60, bottom: 260, left: window.innerWidth < 760 ? 30 : 300, right: 60}, duration: 900, maxZoom: 15}); }
+  }
+}
+function setRoute(rt) {
+  const feats = [];
+  if (rt) { let st = 0;
+    for (let i = 1; i < rt.ld.length; i++) {
+      if (i === rt.ld.length - 1 || rt.ld[i + 1] !== rt.ld[i]) {
+        const cs = []; for (let j = st; j <= i; j++) cs.push([rt.lo[j], rt.la[j]]);
+        feats.push({type:'Feature', properties:{col: loadColor(rt.ld[i])}, geometry:{type:'LineString', coordinates: cs}}); st = i;
+      }
+    }
+  }
+  if (map.getSource('route')) map.getSource('route').setData({type:'FeatureCollection', features: feats});
+  if (!rt && truck) { truck.remove(); truck = null; }
+}
+function drawProfile() {
+  const svg = $('prof'); svg.innerHTML = ''; if (!cur) { svg.style.display = 'none'; return; } svg.style.display = 'block';
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 150, ml = 38, mr = 8, mt = 16, mb = 20, rt = cur, n = rt.d.length;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  const dmax = Math.max(rt.d[n - 1], 1); let z0 = Math.min(...rt.z), z1 = Math.max(...rt.z); if (z1 - z0 < 40) z1 = z0 + 40;
+  const X = d => ml + (W - ml - mr) * d / dmax, Y = z => H - mb - (H - mt - mb) * (z - z0) / (z1 - z0);
+  rt.X = X; rt.px = rt.d.map(X);
+  let h = '';
+  for (let g = 0; g <= 2; g++) { const zz = z0 + (z1 - z0) * g / 2, y = Y(zz);
+    h += '<line x1="' + ml + '" x2="' + (W - mr) + '" y1="' + y + '" y2="' + y + '" stroke="currentColor" stroke-opacity=".13"/>' +
+         '<text x="' + (ml - 4) + '" y="' + (y + 3.5) + '" text-anchor="end">' + Math.round(zz) + '</text>'; }
+  const step = [1, 2, 5, 10, 20, 50].find(s => dmax / 1000 / s <= 7) || 100;
+  for (let km = 0; km <= dmax / 1000; km += step) h += '<text x="' + X(km * 1000) + '" y="' + (H - 6) + '" text-anchor="middle">' + km + (km === 0 ? ' km' : '') + '</text>';
+  let st = 0;
+  for (let i = 1; i < n; i++) if (i === n - 1 || rt.ld[i + 1] !== rt.ld[i]) {
+    let dd = 'M' + X(rt.d[st]) + ',' + (H - mb);
+    for (let j = st; j <= i; j++) dd += 'L' + X(rt.d[j]).toFixed(1) + ',' + Y(rt.z[j]).toFixed(1);
+    h += '<path d="' + dd + 'L' + X(rt.d[i]) + ',' + (H - mb) + 'Z" fill="' + loadColor(rt.ld[i]) + '" fill-opacity=".85"/>'; st = i;
+  }
+  let last = -99;
+  for (let i = 1; i < n - 1; i++) if (rt.ld[i + 1] !== rt.ld[i]) { const x = X(rt.d[i]);
+    h += '<line x1="' + x + '" x2="' + x + '" y1="' + mt + '" y2="' + (H - mb) + '" stroke="currentColor" stroke-opacity=".45" stroke-dasharray="3 3"/>';
+    if (x - last > 46) { h += '<text x="' + (x + 3) + '" y="' + (mt - 4) + '" style="fill:var(--ink);font-weight:600">' + esc(rt.ld[i + 1] >= 4 && rt.ld[i + 1] < 9 ? '→' + rt.ld[i + 1] + ' 方' : rt.ld[i + 1] === 9 ? '→主線' : '→危險') + '</text>'; last = x; } }
+  h += '<line id="cursor" x1="0" x2="0" y1="' + mt + '" y2="' + (H - mb) + '" stroke="currentColor" stroke-width="1.5" style="display:none"/>';
+  svg.innerHTML = h;
+}
+function readout(i) {
+  if (!cur) return; const rt = cur;
+  $('read').innerHTML = '里程 <b>' + (rt.d[i] / 1000).toFixed(1) + ' km</b>|高程 <b>' + rt.z[i] + ' m</b>|開到這裡可載 <b>' + esc(loadText(rt.ld[i])) + '</b>';
+  const c = document.getElementById('cursor'); if (c) { c.style.display = ''; c.setAttribute('x1', rt.px[i]); c.setAttribute('x2', rt.px[i]); }
+  if (!truck) truck = new maplibregl.Marker({element: Object.assign(document.createElement('div'), {className:'truck'})}).setLngLat([rt.lo[i], rt.la[i]]).addTo(map);
+  truck.setLngLat([rt.lo[i], rt.la[i]]); truck.getElement().style.borderColor = loadColor(rt.ld[i]);
+}
+function profileAt(ev) {
+  if (!cur) return; const r = $('prof').getBoundingClientRect(), x = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left) * ($('prof').viewBox.baseVal.width / r.width);
+  let lo = 0, hi = cur.px.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cur.px[m] < x) lo = m; else hi = m; }
+  stopAnim(); readout(Math.abs(cur.px[lo] - x) < Math.abs(cur.px[hi] - x) ? lo : hi);
+}
+['mousemove', 'touchstart', 'touchmove', 'click'].forEach(t => $('prof').addEventListener(t, profileAt, {passive: true}));
+window.addEventListener('resize', () => { if (cur) drawProfile(); });
+function stopAnim() { if (anim) { cancelAnimationFrame(anim); anim = null; $('play').textContent = '▶ 播放路線'; } }
+$('play').addEventListener('click', () => {
+  if (anim) { stopAnim(); return; } if (!cur) return;
+  const rt = cur, total = rt.d[rt.d.length - 1], dur = Math.min(24000, Math.max(8000, total / 5)), t0 = performance.now(); let i = 0;
+  $('play').textContent = '■ 停止';
+  const tick = now => {
+    const dd = total * Math.min(1, (now - t0) / dur); while (i < rt.d.length - 1 && rt.d[i + 1] <= dd) i++;
+    readout(i);
+    if (i < rt.d.length - 1 && rt.d[i + 1] > rt.d[i]) { const f = (dd - rt.d[i]) / (rt.d[i + 1] - rt.d[i]); truck.setLngLat([rt.lo[i] + (rt.lo[i + 1] - rt.lo[i]) * f, rt.la[i] + (rt.la[i + 1] - rt.la[i]) * f]); }
+    if (dd < total) anim = requestAnimationFrame(tick); else stopAnim();
+  };
+  anim = requestAnimationFrame(tick);
+});
+$('close').addEventListener('click', () => { stopAnim(); $('sheet').classList.remove('show'); cur = null; setRoute(null); });
+
+map.on('click', e => {
+  if (!map.getLayer('roads-hit')) return;
+  const p = e.point, fs = map.queryRenderedFeatures([[p.x - 9, p.y - 9], [p.x + 9, p.y + 9]], {layers: ['roads-hit']});
+  if (!fs.length) return;
+  const cs = Math.cos(e.lngLat.lat * Math.PI / 180); let best = null, bd = Infinity;
+  new Set(fs.map(f => f.properties.i)).forEach(i => { const r = RUNS[i];
+    r.pts.forEach((q, k) => { const dx = (q[0] - e.lngLat.lng) * cs, dy = q[1] - e.lngLat.lat, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = [r, k]; } }); });
+  if (best) select(best[0], best[1], false);
+});
+map.on('mousemove', e => { if (map.getLayer('roads-hit')) map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, {layers: ['roads-hit']}).length ? 'pointer' : ''; });
+
+// ---------- 搜尋與定位 ----------
+const A = '23456789CFGHJMPQRVWX';
+function plusCode(txt) {
+  const m = txt.toUpperCase().match(/([23456789CFGHJMPQRVWX]{2,8})\+([23456789CFGHJMPQRVWX]{2,3})/); if (!m) return null;
+  const ref = [24.5, 121.5]; let c = m[1] + m[2];
+  if (m[1].length < 8) c = '7QP3'.slice(0, 8 - m[1].length) + c;
+  let lat = -90, lon = -180, rl = 400, ro = 400;
+  for (let i = 0; i < 10; i += 2) { rl /= 20; ro /= 20; lat += A.indexOf(c[i]) * rl; lon += A.indexOf(c[i + 1]) * ro; }
+  let hl = rl, ho = ro;
+  for (const ch of c.slice(10)) { hl /= 5; ho /= 4; const d = A.indexOf(ch); lat += Math.floor(d / 4) * hl; lon += (d % 4) * ho; }
+  lat += hl / 2; lon += ho / 2;
+  if (m[1].length < 8) { if (lat - ref[0] > 0.5) lat -= 1; else if (ref[0] - lat > 0.5) lat += 1; if (lon - ref[1] > 0.5) lon -= 1; else if (ref[1] - lon > 0.5) lon += 1; }
+  return [lat, lon];
+}
+function locate(lat, lon, what) {
+  if (pin) pin.remove();
+  pin = new maplibregl.Marker({element: Object.assign(document.createElement('div'), {className:'pin'})}).setLngLat([lon, lat]).addTo(map);
+  const nr = nearest(lat, lon, false);
+  if (nr && nr.m <= 300) { $('msg').textContent = what + ':最近的道路在 ' + Math.round(nr.m) + ' 公尺外'; select(nr.run, nr.v, true); }
+  else { $('msg').textContent = what + ':300 公尺內沒有圖資道路' + (nr ? '(最近 ' + (nr.m / 1000).toFixed(1) + ' km)' : ''); map.flyTo({center: [lon, lat], zoom: 14}); }
+}
+const names = {};
+Object.entries(D.roads).forEach(([id, R]) => { if (!R[0].startsWith('未命名')) (names[R[0] + '|' + R[1]] = names[R[0] + '|' + R[1]] || []).push(+id); });
+const sug = $('sug');
+Object.keys(names).concat(D.places.map(p => p[0])).forEach(v => { const o = document.createElement('option'); o.value = v; sug.appendChild(o); });
+function search(v) {
+  v = v.trim(); if (!v) return;
+  const ll = v.match(/(-?\d{1,2}\.\d+)\s*[,，\s]\s*(-?\d{2,3}\.\d+)/);
+  if (ll) return locate(+ll[1], +ll[2], '座標');
+  const pc = plusCode(v); if (pc) return locate(pc[0], pc[1], 'Plus Code');
+  const key = names[v] ? v : Object.keys(names).find(k => k.includes(v));
+  if (key) { const ids = new Set(names[key]), b = new maplibregl.LngLatBounds(); let first = null;
+    RUNS.forEach(r => { if (ids.has(r.rid)) { r.pts.forEach(p => b.extend(p)); first = first || r; } });
+    if (first) { $('msg').textContent = '道路:' + key; map.fitBounds(b, {padding: 80, maxZoom: 15, duration: 900}); return; } }
+  const pl = D.places.find(p => p[0] === v) || D.places.find(p => p[0].includes(v));
+  if (pl) { $('msg').textContent = '地名:' + pl[0]; map.flyTo({center: [pl[2], pl[1]], zoom: 14.5, pitch: is3d ? 55 : 0}); return; }
+  $('msg').textContent = '找不到「' + v + '」。可輸入路名、地名、「緯度, 經度」或 Plus Code。';
+}
+$('q').addEventListener('change', e => search(e.target.value));
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') { search(e.target.value); e.target.blur(); } });
+geo.on('geolocate', e => locate(e.coords.latitude, e.coords.longitude, '目前位置'));
+geo.on('error', () => { $('msg').textContent = '無法取得定位(需要允許定位,且網頁要以 https 開啟)。'; });
+
+// 供測試或分享用:網址加 #q=JG47+M73 會自動搜尋
+map.once('idle', () => { const m = decodeURIComponent(location.hash).match(/q=(.+)$/); if (m) { $('q').value = m[1]; search(m[1]); } });
+</script>
+</body>
+</html>
