@@ -68,7 +68,7 @@
   <h1>預拌車載運量地圖</h1>
   <div class="sub">藍色=已確認可滿載的主線。其他顏色=建議載運量(暫定規則,僅供參考)。點道路看路線與坡度剖面。</div>
   <h2>搜尋</h2>
-  <input id="q" list="sug" placeholder="路名、地名、座標或 Plus Code" autocomplete="off"><datalist id="sug"></datalist>
+  <input id="q" list="sug" placeholder="路名、地名、經緯度、TWD97 座標或 Plus Code" autocomplete="off"><datalist id="sug"></datalist>
   <div id="msg"></div>
   <h2>檢視</h2>
   <div class="row">
@@ -360,6 +360,29 @@ function plusCode(txt) {
   if (m[1].length < 8) { if (lat - ref[0] > 0.5) lat -= 1; else if (ref[0] - lat > 0.5) lat += 1; if (lon - ref[1] > 0.5) lon -= 1; else if (ref[1] - lon > 0.5) lon += 1; }
   return [lat, lon];
 }
+// 二度分帶座標(TWD97 TM2,中央經線 121°)轉經緯度;TWD67 先用常用的近似公式換成 TWD97(誤差約 2 公尺)
+function tm2(x, y) {
+  const a = 6378137, f = 1 / 298.257222101, k0 = 0.9999, e2 = f * (2 - f), ep2 = e2 / (1 - e2);
+  const e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
+  const mu = y / k0 / (a * (1 - e2 / 4 - 3 * e2 * e2 / 64 - 5 * e2 ** 3 / 256));
+  const p = mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * Math.sin(2 * mu) + (21 * e1 * e1 / 16 - 55 * e1 ** 4 / 32) * Math.sin(4 * mu)
+    + 151 * e1 ** 3 / 96 * Math.sin(6 * mu) + 1097 * e1 ** 4 / 512 * Math.sin(8 * mu);
+  const sn = Math.sin(p), cs = Math.cos(p), T = (sn / cs) ** 2, C = ep2 * cs * cs;
+  const N = a / Math.sqrt(1 - e2 * sn * sn), R = a * (1 - e2) / (1 - e2 * sn * sn) ** 1.5, d = (x - 250000) / (N * k0);
+  const lat = p - N * sn / cs / R * (d * d / 2 - (5 + 3 * T + 10 * C - 4 * C * C - 9 * ep2) * d ** 4 / 24
+    + (61 + 90 * T + 298 * C + 45 * T * T - 252 * ep2 - 3 * C * C) * d ** 6 / 720);
+  const lon = (d - (1 + 2 * T + C) * d ** 3 / 6 + (5 - 2 * C + 28 * T - 3 * C * C + 8 * ep2 + 24 * T * T) * d ** 5 / 120) / cs;
+  return [lat * 180 / Math.PI, 121 + lon * 180 / Math.PI];
+}
+function twdXY(txt) {
+  const is67 = /67/.test(txt.replace(/[\d.]{5,}/g, ''));
+  const n = (txt.replace(/(\d),(?=\d{3}(\D|$))/g, '$1').match(/\d{6,7}(\.\d+)?/g) || []).map(Number);
+  if (n.length !== 2) return null;
+  let x = Math.min(n[0], n[1]), y = Math.max(n[0], n[1]);
+  if (x < 140000 || x > 360000 || y < 2400000 || y > 2800000) return null;
+  if (is67) { const A = 0.00001549, B = 0.000006521; [x, y] = [x + 807.8 + A * x + B * y, y - 248.6 + A * y + B * x]; }
+  return tm2(x, y).concat(is67 ? 'TWD67' : 'TWD97');
+}
 function locate(lat, lon, what) {
   if (pin) pin.remove();
   pin = new maplibregl.Marker({element: Object.assign(document.createElement('div'), {className:'pin'})}).setLngLat([lon, lat]).addTo(map);
@@ -373,6 +396,7 @@ const sug = $('sug');
 Object.keys(names).concat(D.places.map(p => p[0])).forEach(v => { const o = document.createElement('option'); o.value = v; sug.appendChild(o); });
 function search(v) {
   v = v.trim(); if (!v) return;
+  const tw = twdXY(v); if (tw) return locate(tw[0], tw[1], tw[2] + ' 換算為 ' + tw[0].toFixed(5) + ', ' + tw[1].toFixed(5));
   const ll = v.match(/(-?\d{1,2}\.\d+)\s*[,，\s]\s*(-?\d{2,3}\.\d+)/);
   if (ll) return locate(+ll[1], +ll[2], '座標');
   const pc = plusCode(v); if (pc) return locate(pc[0], pc[1], 'Plus Code');
@@ -382,7 +406,7 @@ function search(v) {
     if (first) { $('msg').textContent = '道路:' + key; map.fitBounds(b, {padding: 80, maxZoom: 15, duration: 900}); return; } }
   const pl = D.places.find(p => p[0] === v) || D.places.find(p => p[0].includes(v));
   if (pl) { $('msg').textContent = '地名:' + pl[0]; map.flyTo({center: [pl[2], pl[1]], zoom: 14.5, pitch: is3d ? 55 : 0}); return; }
-  $('msg').textContent = '找不到「' + v + '」。可輸入路名、地名、「緯度, 經度」或 Plus Code。';
+  $('msg').textContent = '找不到「' + v + '」。可輸入路名、地名、「緯度, 經度」、TWD97 二度分帶「X, Y」或 Plus Code。';
 }
 $('q').addEventListener('change', e => search(e.target.value));
 $('q').addEventListener('keydown', e => { if (e.key === 'Enter') { search(e.target.value); e.target.blur(); } });
